@@ -95,12 +95,3 @@ curl -X GET http://localhost:3000/api/results/{jobId}
 ]
 ```
 
-## AI Usage Disclosure
-- **Which parts AI helped generate:** The core scaffolding, Docker Compose configuration, BullMQ worker boilerplate, Express routing logic, and the mathematical implementation for Laplacian variance and luminance algorithms.
-- **Where AI output was wrong and how I fixed it:** Initially, the Docker Compose configuration conflicted with the host machine's port 5432. I manually updated the `.env` to leverage a remote Neon database instance to bypass local OS configuration issues. Additionally, an obsolete `version: '3.8'` tag was removed from the `docker-compose.yml` to clear up warnings.
-- **How I validated AI-generated code:** I ran TS-Node compilations locally, actively tested the Neon database connection using `npm run db:init`, verified API endpoint contracts, and reviewed the implementation of manual algorithms against standard computer vision mathematical references.
-
-## Trade-offs
-- **What was intentionally simplified:** Local file storage (`uploads/`) was used over AWS S3. For a true production system, multipart streams should upload directly to S3 via pre-signed URLs to avoid tying up the Express memory footprint.
-- **What would be improved with more time:** Unit tests (Jest) to mock Tesseract and Sharp functionality. Further abstractions of the OCR to identify more regional variations of plates, and adding rate-limiting to the `/upload` route.
-- **Scalability and failure handling concerns:** Currently, the worker runs inside the same process as the Express app. Under extreme load, CPU-heavy tasks like `sharp` convolutions and `tesseract` OCR will block the Node event loop and degrade API response times. They must be decoupled into isolated, horizontally scalable Docker containers in the future.

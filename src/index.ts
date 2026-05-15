@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import jobRoutes from './routes/jobRoutes';
 import './workers'; // Start the BullMQ worker in the same process (see workers/index.ts)
 import { logger } from './utils/logger';
@@ -17,6 +18,16 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+// Rate limiting: max 20 uploads per IP per 15 minutes
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many uploads from this IP, please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use('/api/upload', uploadLimiter);
 app.use('/api', jobRoutes);
 
 app.get('/health', (_req: Request, res: Response) => {
