@@ -4,6 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { pool } from '../db/pool';
 import { imageProcessingQueue } from '../queue';
+import { logger } from '../utils/logger';
 
 const router = Router();
 
@@ -58,7 +59,7 @@ router.post('/upload', upload.single('image'), async (req, res) => {
 
     res.status(202).json({ jobId });
   } catch (error) {
-    console.error('Upload error:', error);
+    logger.error('Upload error:', { error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -78,7 +79,7 @@ router.get('/status/:id', async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Status fetch error:', error);
+    logger.error('Status fetch error:', { error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -100,7 +101,7 @@ router.get('/results/:id', async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Results fetch error:', error);
+    logger.error('Results fetch error:', { error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

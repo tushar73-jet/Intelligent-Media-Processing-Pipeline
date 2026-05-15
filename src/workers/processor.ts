@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import { pool } from '../db/pool';
 import { runAllChecks } from '../checks';
+import { logger } from '../utils/logger';
 
 export const processImageJob = async (job: Job) => {
   const { jobId, filepath } = job.data;
@@ -38,6 +39,7 @@ export const processImageJob = async (job: Job) => {
       'UPDATE jobs SET status = $1, failure_reason = $2, updated_at = NOW() WHERE id = $3',
       ['failed', error.message || 'Unknown processing error', jobId]
     );
+    logger.error('Job processing failed', { jobId, error: error.message });
     throw error;
   } finally {
     client.release();

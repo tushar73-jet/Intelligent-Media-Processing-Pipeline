@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import dotenv from 'dotenv';
 import { processImageJob } from './processor';
+import { logger } from '../utils/logger';
 
 dotenv.config();
 
@@ -17,11 +18,11 @@ export const imageWorker = new Worker('image-processing', processImageJob, {
 });
 
 imageWorker.on('completed', (job) => {
-  console.log(`✅ Job ${job.id} (DB ID: ${job.data.jobId}) completed successfully.`);
+  logger.info(`Job completed successfully`, { jobId: job.id, dbId: job.data.jobId });
 });
 
 imageWorker.on('failed', (job, err) => {
-  console.error(`❌ Job ${job?.id} (DB ID: ${job?.data?.jobId}) failed: ${err.message}`);
+  logger.error(`Job failed`, { jobId: job?.id, dbId: job?.data?.jobId, error: err.message });
 });
 
-console.log('Worker listening for jobs on queue "image-processing"...');
+logger.info('Worker listening for jobs on queue "image-processing"...');
