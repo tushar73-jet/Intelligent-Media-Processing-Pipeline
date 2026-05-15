@@ -5,3 +5,5 @@ uploads/*
 !uploads/.gitkeep
 *.log
 .DS_Store
+eng.traineddata
+generate_test_image.js
