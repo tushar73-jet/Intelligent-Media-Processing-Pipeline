@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import jobRoutes from './routes/jobRoutes';
+import './workers'; // Initialize worker process
 
 dotenv.config();
 
