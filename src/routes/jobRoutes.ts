@@ -1,6 +1,7 @@
-import { Router } from 'express';
-import multer from 'multer';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer, { MulterError } from 'multer';
 import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { pool } from '../db/pool';
 import { imageProcessingQueue } from '../queue';
@@ -8,101 +9,169 @@ import { logger } from '../utils/logger';
 
 const router = Router();
 
+const uploadDir = process.env.UPLOAD_DIR || 'uploads/';
+fs.mkdirSync(uploadDir, { recursive: true }); 
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, process.env.UPLOAD_DIR || 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename:    (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `${uuidv4()}${ext}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) {
-      return cb(null, true);
-    }
-    cb(new Error('Only images (jpeg, jpg, png, webp) are allowed'));
+  limits: { fileSize: 10 * 1024 * 1024 }, 
+  fileFilter: (_req, file, cb) => {
+    const allowed = /jpeg|jpg|png|webp/;
+    const extOk   = allowed.test(path.extname(file.originalname).toLowerCase());
+    const mimeOk  = allowed.test(file.mimetype);
+    if (extOk && mimeOk) return cb(null, true);
+    cb(new Error('Only jpeg, jpg, png, webp images are accepted'));
   },
 });
 
-
-router.post('/upload', upload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No image uploaded' });
-    }
-
-    const { filename, path: filepath } = req.file;
-
-
-    const result = await pool.query(
-      'INSERT INTO jobs (status, filename, filepath) VALUES ($1, $2, $3) RETURNING id',
-      ['pending', filename, filepath]
-    );
-
-    const jobId = result.rows[0].id;
-
-
-    await imageProcessingQueue.add('process-image', {
-      jobId,
-      filename,
-      filepath,
+router.post(
+  '/upload',
+  (req: Request, res: Response, next: NextFunction) => {
+    upload.single('image')(req, res, (err) => {
+      if (err instanceof MulterError) {
+        return res.status(400).json({ error: `Upload error: ${err.message}` });
+      }
+      if (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      next();
     });
+  },
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No image field found in request' });
+      }
 
-    res.status(202).json({ jobId });
-  } catch (error) {
-    logger.error('Upload error:', { error });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const { filename, path: filepath } = req.file;
 
+      const result = await pool.query(
+        `INSERT INTO jobs (status, filename, filepath)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        ['pending', filename, filepath],
+      );
 
-router.get('/status/:id', async (req, res) => {
+      const jobId = result.rows[0].id as string;
+
+      await imageProcessingQueue.add(
+        'process-image',
+        { jobId, filename, filepath },
+        { jobId },
+      );
+
+      logger.info('Job enqueued', { jobId, filename });
+      return res.status(202).json({ jobId });
+    } catch (error) {
+      logger.error('Upload handler error', { error });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.get('/status/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      'SELECT id, status, failure_reason, created_at FROM jobs WHERE id = $1',
-      [id]
+      `SELECT id, status, failure_reason, created_at, updated_at
+       FROM jobs WHERE id = $1`,
+      [id],
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    res.json(result.rows[0]);
+    return res.json(result.rows[0]);
   } catch (error) {
-    logger.error('Status fetch error:', { error });
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Status fetch error', { error });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-
-router.get('/results/:id', async (req, res) => {
+router.get('/results/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
-    const jobCheck = await pool.query('SELECT id FROM jobs WHERE id = $1', [id]);
+
+    const jobCheck = await pool.query('SELECT id, status FROM jobs WHERE id = $1', [id]);
     if (jobCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    const result = await pool.query(
-      'SELECT check_name, passed, confidence, detail, created_at FROM results WHERE job_id = $1',
-      [id]
+    const results = await pool.query(
+      `SELECT check_name, passed, confidence, detail, created_at
+       FROM results
+       WHERE job_id = $1
+       ORDER BY created_at ASC`,
+      [id],
     );
 
-    res.json(result.rows);
+    const rows = results.rows as Array<{
+      check_name: string;
+      passed: boolean;
+      confidence: number;
+      detail: unknown;
+      created_at: string;
+    }>;
+
+    const overallConfidence =
+      rows.length > 0
+        ? Number(
+            (rows.reduce((s, r) => s + r.confidence, 0) / rows.length).toFixed(2),
+          )
+        : null;
+
+    return res.json({
+      jobId:             id,
+      jobStatus:         jobCheck.rows[0].status,
+      overallConfidence,
+      checks:            rows,
+    });
   } catch (error) {
-    logger.error('Results fetch error:', { error });
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Results fetch error', { error });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/analytics', async (_req: Request, res: Response) => {
+  try {
+    const totals = await pool.query(
+      `SELECT
+         COUNT(*)                                              AS total_jobs,
+         COUNT(*) FILTER (WHERE status = 'completed')         AS completed,
+         COUNT(*) FILTER (WHERE status = 'failed')            AS failed,
+         COUNT(*) FILTER (WHERE status = 'pending')           AS pending,
+         COUNT(*) FILTER (WHERE status = 'processing')        AS processing
+       FROM jobs`,
+    );
+
+    const passRates = await pool.query(
+      `SELECT
+         check_name,
+         ROUND(AVG(confidence)::numeric, 2)                   AS avg_confidence,
+         ROUND((100.0 * SUM(CASE WHEN passed THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1)
+                                                               AS pass_rate_pct,
+         COUNT(*)                                              AS total_checks
+       FROM results
+       GROUP BY check_name
+       ORDER BY check_name`,
+    );
+
+    return res.json({
+      jobs:       totals.rows[0],
+      checkStats: passRates.rows,
+    });
+  } catch (error) {
+    logger.error('Analytics error', { error });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
