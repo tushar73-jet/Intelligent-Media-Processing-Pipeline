@@ -40,6 +40,7 @@ services:
       - REDIS_PORT=6379
       - UPLOAD_DIR=uploads/
       - DB_POOL_MAX=10
+      - OTEL_SERVICE_NAME=intelligent-media-pipeline
     volumes:
       - ./uploads:/usr/src/app/uploads
     depends_on:
