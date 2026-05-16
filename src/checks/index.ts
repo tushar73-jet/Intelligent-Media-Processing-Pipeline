@@ -197,7 +197,7 @@ export const checkOCR = async (filepath: string): Promise<CheckResult> => {
   });
 
   const extractedText = data.text ?? '';
-  const cleaned       = extractedText.replace(/[\s\-]/g, '').toUpperCase();
+  const cleaned       = extractedText.replace(/[\s-]/g, '').toUpperCase();
 
   const plateRegex = /[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}/g;
   const matches    = cleaned.match(plateRegex) ?? [];

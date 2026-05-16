@@ -11,7 +11,7 @@ const redisConfig = process.env.REDIS_URL
       port: parseInt(process.env.REDIS_PORT || '6379', 10),
     };
 
-export const redisConnection = new IORedis(redisConfig as any, {
+export const redisConnection = new IORedis(redisConfig as string | { host: string; port: number }, {
   maxRetriesPerRequest: null,
 });
  

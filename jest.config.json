@@ -2,5 +2,12 @@
   "preset": "ts-jest",
   "testEnvironment": "node",
   "testMatch": ["**/tests/**/*.test.ts"],
-  "moduleFileExtensions": ["ts", "js", "json"]
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "transformIgnorePatterns": [
+    "node_modules/(?!(express-request-id)/)"
+  ],
+  "moduleNameMapper": {
+    "^../tracing$": "<rootDir>/tests/__mocks__/tracing.ts",
+    "^./tracing$":  "<rootDir>/tests/__mocks__/tracing.ts"
+  }
 }
