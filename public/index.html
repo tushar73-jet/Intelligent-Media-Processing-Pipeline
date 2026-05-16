@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intelligent Media Pipeline Dashboard</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #2c3e50; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .btn { background-color: #3498db; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn:hover { background-color: #2980b9; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; }
+        .stat-box { background: #ecf0f1; padding: 15px; border-radius: 6px; text-align: center; }
+        .stat-box h3 { margin: 0; font-size: 1.5em; color: #2c3e50; }
+        .stat-box p { margin: 5px 0 0; color: #7f8c8d; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
+        #jobDetails { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Media Pipeline Dashboard</h1>
+        
+        <div class="card">
+            <h2>Upload Media</h2>
+            <form id="uploadForm">
+                <input type="file" id="fileInput" name="image" accept="image/jpeg, image/png, image/webp" required>
+                <button type="submit" class="btn">Upload & Process</button>
+            </form>
+            <div id="uploadStatus" style="margin-top: 10px; font-weight: bold;"></div>
+        </div>
+
+        <div class="card" id="jobStatusCard" style="display: none;">
+            <h2>Job Status: <span id="currentJobId" style="font-size: 0.8em; color: #7f8c8d;"></span></h2>
+            <div id="jobDetails">Polling...</div>
+            <pre id="jobResults"></pre>
+        </div>
+
+        <div class="card">
+            <h2>System Analytics</h2>
+            <button class="btn" onclick="fetchAnalytics()" style="margin-bottom: 15px;">Refresh Analytics</button>
+            <div class="grid" id="analyticsGrid">
+                <!-- Analytics populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('image', fileInput.files[0]);
+
+            const statusEl = document.getElementById('uploadStatus');
+            statusEl.textContent = 'Uploading...';
+            statusEl.style.color = '#333';
+
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+
+                if (!res.ok) throw new Error(data.error || 'Upload failed');
+                
+                statusEl.textContent = 'Upload successful. Job enqueued!';
+                statusEl.style.color = '#27ae60';
+                
+                startSSEListener(data.jobId);
+                fetchAnalytics();
+            } catch (err) {
+                statusEl.textContent = err.message;
+                statusEl.style.color = '#e74c3c';
+            }
+        });
+
+        async function startSSEListener(jobId) {
+            document.getElementById('jobStatusCard').style.display = 'block';
+            document.getElementById('currentJobId').textContent = jobId;
+            const detailsEl = document.getElementById('jobDetails');
+            const resultsEl = document.getElementById('jobResults');
+            
+            detailsEl.innerHTML = 'Connecting to real-time updates...';
+            resultsEl.textContent = '';
+
+            const eventSource = new EventSource(`/api/status/${jobId}/events`);
+
+            eventSource.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                detailsEl.innerHTML = `Status: <strong>${data.status}</strong>`;
+                
+                if (data.status === 'completed' || data.status === 'failed') {
+                    eventSource.close();
+                    if (data.status === 'completed') {
+                        const resResults = await fetch(`/api/results/${jobId}`);
+                        const resultsData = await resResults.json();
+                        resultsEl.textContent = JSON.stringify(resultsData, null, 2);
+                    } else {
+                        resultsEl.textContent = 'Failed: ' + (data.reason || 'Unknown error');
+                    }
+                    fetchAnalytics();
+                }
+            };
+
+            eventSource.onerror = (err) => {
+                console.error('SSE error', err);
+                eventSource.close();
+                // Fallback to polling or show error
+                detailsEl.innerHTML += '<br><span style="color: red;">Real-time connection lost.</span>';
+            };
+        }
+
+        async function fetchAnalytics() {
+            try {
+                const res = await fetch('/api/analytics');
+                const data = await res.json();
+                
+                if (data.jobs) {
+                    const grid = document.getElementById('analyticsGrid');
+                    grid.innerHTML = `
+                        <div class="stat-box"><h3>${data.jobs.total_jobs}</h3><p>Total</p></div>
+                        <div class="stat-box"><h3>${data.jobs.completed}</h3><p>Completed</p></div>
+                        <div class="stat-box"><h3>${data.jobs.failed}</h3><p>Failed</p></div>
+                        <div class="stat-box"><h3>${data.jobs.processing}</h3><p>Processing</p></div>
+                        <div class="stat-box"><h3>${data.jobs.pending}</h3><p>Pending</p></div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Analytics error', e);
+            }
+        }
+
+        fetchAnalytics();
+    </script>
+</body>
+</html>

@@ -4,8 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { pool } from '../db/pool';
-import { imageProcessingQueue } from '../queue';
+import { imageProcessingQueue, redisConnection } from '../queue';
 import { logger } from '../utils/logger';
+import sharp from 'sharp';
 
 const router = Router();
 
@@ -51,7 +52,27 @@ router.post(
         return res.status(400).json({ error: 'No image field found in request' });
       }
 
+      if (req.file.size === 0) {
+        fs.unlink(req.file.path, () => {}); // clean up
+        return res.status(400).json({ error: 'Zero-byte uploads are not allowed' });
+      }
+
       const { filename, path: filepath } = req.file;
+      const webhookUrl = req.body.webhookUrl;
+
+      // Validate Image Dimensions
+      try {
+        const metadata = await sharp(filepath).metadata();
+        const width = metadata.width || 0;
+        const height = metadata.height || 0;
+        if (width < 200 || height < 200) {
+          fs.unlink(filepath, () => {});
+          return res.status(400).json({ error: 'Image resolution too low. Minimum 200x200 px required.' });
+        }
+      } catch (err) {
+        fs.unlink(filepath, () => {});
+        return res.status(400).json({ error: 'Invalid image file.' });
+      }
 
       const result = await pool.query(
         `INSERT INTO jobs (status, filename, filepath)
@@ -64,7 +85,7 @@ router.post(
 
       await imageProcessingQueue.add(
         'process-image',
-        { jobId, filename, filepath },
+        { jobId, filename, filepath, webhookUrl },
         { jobId },
       );
 
@@ -95,6 +116,34 @@ router.get('/status/:id', async (req: Request, res: Response) => {
     logger.error('Status fetch error', { error });
     return res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+router.get('/status/:id/events', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const subscriber = redisConnection.duplicate();
+  await subscriber.subscribe(`job-status:${id}`);
+
+  subscriber.on('message', (channel, message) => {
+    res.write(`data: ${message}\n\n`);
+    const data = JSON.parse(message);
+    if (data.status === 'completed' || data.status === 'failed') {
+      subscriber.unsubscribe();
+      subscriber.quit();
+      res.end();
+    }
+  });
+
+  req.on('close', () => {
+    subscriber.unsubscribe();
+    subscriber.quit();
+  });
 });
 
 router.get('/results/:id', async (req: Request, res: Response) => {

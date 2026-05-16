@@ -17,6 +17,7 @@ const describeOrSkip = skipLocally ? describe.skip : describe;
 let pool: any;
 let redisConnection: any;
 let app: any;
+let imageProcessingQueue: any;
 
 beforeAll(async () => {
   if (!isCi) {
@@ -47,14 +48,19 @@ beforeAll(async () => {
   await pool.query(schema);
 
   const queueModule = require('../src/queue');
-  redisConnection   = queueModule.redisConnection;
+  redisConnection      = queueModule.redisConnection;
+  imageProcessingQueue = queueModule.imageProcessingQueue;
 
   app = require('../src/index').default;
 }, 90_000);
 
 afterAll(async () => {
-  if (pool)            await pool.end().catch(() => {});
-  if (redisConnection) await redisConnection.quit().catch(() => {});
+  if (imageProcessingQueue) await imageProcessingQueue.close().catch(() => {});
+  if (pool)                 await pool.end().catch(() => {});
+  if (redisConnection)      await redisConnection.quit().catch(() => {});
+  
+  // Give some time for connections to close
+  await new Promise(resolve => setTimeout(resolve, 500));
 });
 
 describeOrSkip('Full Pipeline Integration', () => {

@@ -1,8 +1,11 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import Tesseract from 'tesseract.js';
 import { pool } from '../db/pool';
+import { getOCRProvider } from './ocr-provider';
+import { trace, Span } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('media-pipeline-checks');
 
 export interface CheckResult {
   check_name: string;
@@ -100,10 +103,52 @@ export const checkBrightness = async (filepath: string): Promise<CheckResult> =>
 };
 
 
+export const computeDHash = async (filepath: string): Promise<string> => {
+  const { data } = await sharp(filepath)
+    .greyscale()
+    .resize(9, 8, { fit: 'fill' })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  let hash = '';
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const leftPixel = data[y * 9 + x];
+      const rightPixel = data[y * 9 + x + 1];
+      hash += leftPixel < rightPixel ? '1' : '0';
+    }
+  }
+  // Convert 64-bit binary string to hex
+  let hexHash = '';
+  for (let i = 0; i < 64; i += 4) {
+    hexHash += parseInt(hash.substring(i, i + 4), 2).toString(16);
+  }
+  return hexHash;
+};
+
+const hexToBinary = (hex: string): string => {
+  let binary = '';
+  for (let i = 0; i < hex.length; i++) {
+    binary += parseInt(hex[i], 16).toString(2).padStart(4, '0');
+  }
+  return binary;
+};
+
+const hammingDistance = (hash1: string, hash2: string): number => {
+  const bin1 = hexToBinary(hash1);
+  const bin2 = hexToBinary(hash2);
+  let distance = 0;
+  for (let i = 0; i < 64; i++) {
+    if (bin1[i] !== bin2[i]) distance++;
+  }
+  return distance;
+};
+
 export const checkDuplicate = async (
   filepath: string,
   jobId: string,
   precomputedHash?: string,
+  precomputedDHash?: string,
 ): Promise<CheckResult> => {
   const hash =
     precomputedHash ??
@@ -112,7 +157,9 @@ export const checkDuplicate = async (
       .update(await fs.promises.readFile(filepath))
       .digest('hex');
 
-  const result = await pool.query(
+  const dhash = precomputedDHash ?? await computeDHash(filepath);
+
+  const exactMatchResult = await pool.query(
     `SELECT id FROM jobs
      WHERE hash = $1
        AND id != $2
@@ -121,14 +168,29 @@ export const checkDuplicate = async (
     [hash, jobId],
   );
 
-  const isDuplicate     = result.rows.length > 0;
-  const originalJobId   = isDuplicate ? (result.rows[0].id as string) : undefined;
+  let isDuplicate = exactMatchResult.rows.length > 0;
+  let originalJobId = isDuplicate ? (exactMatchResult.rows[0].id as string) : undefined;
+  let distance = 0;
+
+  if (!isDuplicate) {
+    const threshold = parseInt(process.env.DHASH_THRESHOLD || '10', 10);
+    const allJobs = await pool.query(`SELECT id, dhash FROM jobs WHERE id != $1 AND dhash IS NOT NULL ORDER BY created_at ASC`, [jobId]);
+    for (const row of allJobs.rows) {
+      const dist = hammingDistance(dhash, row.dhash);
+      if (dist <= threshold) {
+        isDuplicate = true;
+        originalJobId = row.id;
+        distance = dist;
+        break;
+      }
+    }
+  }
 
   return {
     check_name: 'duplicate',
     passed:     !isDuplicate,
-    confidence: 1.0,
-    detail: { isDuplicate, originalJobId },
+    confidence: isDuplicate && distance > 0 ? 0.8 : 1.0,
+    detail: { isDuplicate, originalJobId, distance },
   };
 };
 
@@ -189,14 +251,10 @@ export const checkScreenshot = async (filepath: string): Promise<CheckResult> =>
 
 
 export const checkOCR = async (filepath: string): Promise<CheckResult> => {
-  // Fix: Read file into a buffer first, as Tesseract.js struggles with raw filepaths on some Node/macOS environments
-  const imageBuffer = await fs.promises.readFile(filepath);
-  
-  const { data } = await Tesseract.recognize(imageBuffer, 'eng', {
-    logger: () => {},
-  });
+  const ocrProvider = getOCRProvider();
+  const ocrResult = await ocrProvider.recognize(filepath);
 
-  const extractedText = data.text ?? '';
+  const extractedText = ocrResult.text;
   const cleaned       = extractedText.replace(/[\s-]/g, '').toUpperCase();
 
   const plateRegex = /[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}/g;
@@ -205,9 +263,7 @@ export const checkOCR = async (filepath: string): Promise<CheckResult> => {
   const plateFound  = matches.length > 0;
   const plateNumber = plateFound ? matches[0] : undefined;
 
-
-  const tesseractConf = (data.confidence ?? 0) / 100;
-  const confidence    = Number(Math.max(tesseractConf, 0.05).toFixed(2)); // floor at 0.05
+  const confidence    = Number(Math.max(ocrResult.confidence, 0.05).toFixed(2)); // floor at 0.05
 
   return {
     check_name: 'ocr',
@@ -231,12 +287,29 @@ export const runAllChecks = async (
   filepath: string,
   jobId: string,
   fileHash: string,           
+  fileDHash: string,
 ): Promise<CheckResult[]> => {
+  const wrapWithTrace = async (name: string, fn: () => Promise<CheckResult>) => {
+    return tracer.startActiveSpan(name, async (span: Span) => {
+      try {
+        const result = await fn();
+        span.setAttribute('check.passed', result.passed);
+        span.setAttribute('check.confidence', result.confidence);
+        return result;
+      } catch (err) {
+        span.recordException(err as Error);
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  };
+
   return Promise.all([
-    checkBlur(filepath),
-    checkBrightness(filepath),
-    checkDuplicate(filepath, jobId, fileHash),
-    checkScreenshot(filepath),
-    checkOCR(filepath),
+    wrapWithTrace('checkBlur', () => checkBlur(filepath)),
+    wrapWithTrace('checkBrightness', () => checkBrightness(filepath)),
+    wrapWithTrace('checkDuplicate', () => checkDuplicate(filepath, jobId, fileHash, fileDHash)),
+    wrapWithTrace('checkScreenshot', () => checkScreenshot(filepath)),
+    wrapWithTrace('checkOCR', () => checkOCR(filepath)),
   ]);
 };

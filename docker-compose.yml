@@ -29,9 +29,9 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
+  api:
     build: .
-    container_name: media-app
+    container_name: media-api
     ports:
       - "3000:3000"
     environment:
@@ -39,6 +39,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - UPLOAD_DIR=uploads/
+      - DB_POOL_MAX=10
     volumes:
       - ./uploads:/usr/src/app/uploads
     depends_on:
@@ -46,6 +47,27 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    command: ["npm", "start"]
+
+  worker:
+    build: .
+    container_name: media-worker
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/media_pipeline
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - UPLOAD_DIR=uploads/
+      - DB_POOL_MAX=20
+      - DHASH_THRESHOLD=10
+      - OCR_PROVIDER=tesseract
+    volumes:
+      - ./uploads:/usr/src/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["npm", "run", "start:worker"]
 
 volumes:
   pgdata:
