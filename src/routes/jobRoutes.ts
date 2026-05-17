@@ -102,7 +102,7 @@ router.get('/status/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      `SELECT id, status, failure_reason, created_at, updated_at
+      `SELECT id, status, failure_reason as "failureReason", created_at as "createdAt", updated_at as "updatedAt"
        FROM jobs WHERE id = $1`,
       [id],
     );

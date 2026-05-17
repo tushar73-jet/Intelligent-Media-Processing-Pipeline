@@ -200,6 +200,34 @@ export const checkScreenshot = async (filepath: string): Promise<CheckResult> =>
   const signals: string[] = [];
   let weightedScore = 0;
 
+  if (metadata.hasAlpha) {
+    signals.push('Image contains alpha channel (transparency)');
+    weightedScore += 0.30;
+  }
+
+  if (metadata.density === 72 || metadata.density === 144) {
+    signals.push(`DPI density is ${metadata.density} (typical of screens)`);
+    weightedScore += 0.20;
+  }
+
+  const { data, info } = await sharp(filepath).greyscale().raw().toBuffer({ resolveWithObject: true });
+  let uniformRows = 0;
+  for (let y = 0; y < info.height; y += Math.max(1, Math.floor(info.height / 20))) {
+    let isUniform = true;
+    const firstPixel = data[y * info.width];
+    for (let x = 1; x < info.width; x++) {
+      if (Math.abs(data[y * info.width + x] - firstPixel) > 2) {
+        isUniform = false;
+        break;
+      }
+    }
+    if (isUniform) uniformRows++;
+  }
+  if (uniformRows > 0) {
+    signals.push('Contains perfectly uniform pixel rows (common in screenshots)');
+    weightedScore += 0.35;
+  }
+
   const exifBuf = metadata.exif;
   const exifStr = exifBuf ? exifBuf.toString('binary') : '';
 
@@ -251,8 +279,21 @@ export const checkScreenshot = async (filepath: string): Promise<CheckResult> =>
 
 
 export const checkOCR = async (filepath: string): Promise<CheckResult> => {
+  const processedPath = `${filepath}-ocr.png`;
+  try {
+    await sharp(filepath)
+      .greyscale()
+      .normalize()
+      .sharpen()
+      .toFile(processedPath);
+  } catch (err) {
+    await fs.promises.copyFile(filepath, processedPath);
+  }
+
   const ocrProvider = getOCRProvider();
-  const ocrResult = await ocrProvider.recognize(filepath);
+  const ocrResult = await ocrProvider.recognize(processedPath);
+
+  fs.unlink(processedPath, () => {});
 
   const extractedText = ocrResult.text;
   const cleaned       = extractedText.replace(/[\s-]/g, '').toUpperCase();
@@ -263,7 +304,7 @@ export const checkOCR = async (filepath: string): Promise<CheckResult> => {
   const plateFound  = matches.length > 0;
   const plateNumber = plateFound ? matches[0] : undefined;
 
-  const confidence    = Number(Math.max(ocrResult.confidence, 0.05).toFixed(2)); // floor at 0.05
+  const confidence    = Number(ocrResult.confidence.toFixed(2));
 
   return {
     check_name: 'ocr',

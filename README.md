@@ -256,7 +256,7 @@ While the pipeline is highly resilient, secure, and ready for production, the fo
 
 ## 🤖 AI Usage Disclosure
 
-This software was developed using pair programming between a developer and **Antigravity**, a powerful, agentic AI coding assistant developed by the **Google DeepMind** team.
+This software was developed with the assistance of an AI coding assistant.
 
 ### How AI was utilized:
 - **Architecting Refactoring**: Assisted in planning the structural separation of the Express API and the BullMQ background workers into separate scalable processes.
