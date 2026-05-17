@@ -11,6 +11,7 @@ const redisConfig = process.env.REDIS_URL
       port: parseInt(process.env.REDIS_PORT || '6379', 10),
     };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const redisConnection = new IORedis(redisConfig as any, {
   maxRetriesPerRequest: null,
 });
