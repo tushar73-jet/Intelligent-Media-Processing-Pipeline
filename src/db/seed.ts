@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { pool } from './pool';
 import { logger } from '../utils/logger';
 
@@ -35,9 +37,6 @@ const seedDatabase = async () => {
         failure_reason: 'File corruption detected: Invalid image file',
       },
     ];
-
-    import fs from 'fs';
-    import path from 'path';
     const uploadDir = path.join(__dirname, '../../uploads');
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
