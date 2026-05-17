@@ -71,14 +71,13 @@ describeOrSkip('Full Pipeline Integration', () => {
     if (!fs.existsSync(testImagePath)) {
       fs.mkdirSync(path.dirname(testImagePath), { recursive: true });
       const sharp = require('sharp');
-      await sharp({
-        create: {
-          width: 300,
-          height: 300,
-          channels: 3,
-          background: { r: 200, g: 200, b: 200 },
-        },
-      })
+      const svgText = `
+        <svg width="300" height="300">
+          <rect x="0" y="0" width="300" height="300" fill="#ffffff" />
+          <text x="10" y="150" font-family="Arial" font-size="40" fill="#000000">MH12DE1433</text>
+        </svg>
+      `;
+      await sharp(Buffer.from(svgText))
         .jpeg()
         .toFile(testImagePath);
     }
@@ -115,4 +114,29 @@ describeOrSkip('Full Pipeline Integration', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it('should fully process the image and extract the license plate in OCR check', async () => {
+    const uploadRes = await request(app)
+      .post('/api/upload')
+      .attach('image', testImagePath);
+    const { jobId } = uploadRes.body;
+    expect(jobId).toBeDefined();
+
+    let finalStatus = 'pending';
+    for (let i = 0; i < 40; i++) {
+      const statusRes = await request(app).get(`/api/status/${jobId}`);
+      finalStatus = statusRes.body.status;
+      if (finalStatus === 'completed' || finalStatus === 'failed') break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    expect(finalStatus).toBe('completed');
+
+    const resultsRes = await request(app).get(`/api/results/${jobId}`);
+    expect(resultsRes.status).toBe(200);
+    
+    const ocrCheck = resultsRes.body.checks.find((c: any) => c.check_name === 'ocr');
+    expect(ocrCheck).toBeDefined();
+    expect(ocrCheck.passed).toBe(true);
+    expect(ocrCheck.detail.plateNumber).toBe('MH12DE1433');
+  }, 30000);
 });

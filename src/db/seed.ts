@@ -36,8 +36,17 @@ const seedDatabase = async () => {
       },
     ];
 
+    import fs from 'fs';
+    import path from 'path';
+    const uploadDir = path.join(__dirname, '../../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
     const insertedJobs = [];
     for (const job of jobs) {
+      const fullPath = path.join(__dirname, '../../', job.filepath);
+      fs.writeFileSync(fullPath, 'dummy image data');
       const res = await client.query(
         `INSERT INTO jobs (status, filename, filepath, hash, dhash, failure_reason)
          VALUES ($1, $2, $3, $4, $5, $6)

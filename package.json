@@ -8,8 +8,10 @@
     "start:worker": "node dist/db/init.js && node dist/workers/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
-    "db:init": "ts-node-dev --transpile-only src/db/init.ts",
-    "db:seed": "ts-node-dev --transpile-only src/db/seed.ts",
+    "db:init": "node dist/db/init.js",
+    "db:init:dev": "ts-node-dev --transpile-only src/db/init.ts",
+    "db:seed": "node dist/db/seed.js",
+    "db:seed:dev": "ts-node-dev --transpile-only src/db/seed.ts",
     "lint": "eslint 'src/**/*.{js,ts}'",
     "format": "prettier --write 'src/**/*.{js,ts}'",
     "test": "jest --config jest.config.json --forceExit --testTimeout=30000"

@@ -62,15 +62,27 @@ export const processImageJob = async (job: Job) => {
 
     const { webhookUrl } = job.data as { webhookUrl?: string };
     if (webhookUrl) {
-      try {
-        await fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId, status: 'completed', results }),
-        });
-        logger.info('Webhook sent successfully', { jobId, webhookUrl });
-      } catch (err) {
-        logger.error('Failed to send webhook', { jobId, webhookUrl, error: err instanceof Error ? err.message : 'Unknown' });
+      const payload = JSON.stringify({ jobId, status: 'completed', results });
+      let attempts = 0;
+      const maxRetries = 3;
+      while (attempts < maxRetries) {
+        try {
+          const res = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          logger.info('Webhook sent successfully', { jobId, webhookUrl, attempt: attempts + 1 });
+          break;
+        } catch (err) {
+          attempts++;
+          if (attempts >= maxRetries) {
+            logger.error('Failed to send webhook after retries', { jobId, webhookUrl, error: err instanceof Error ? err.message : 'Unknown' });
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)));
+          }
+        }
       }
     }
 
