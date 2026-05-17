@@ -65,7 +65,8 @@ const updateQueueMetrics = async () => {
     logger.error('Failed to update metrics', { error: err });
   }
 };
-setInterval(updateQueueMetrics, 10000);
+const metricsInterval = setInterval(updateQueueMetrics, 10000);
+metricsInterval.unref();
 
 app.use(addRequestId());
 app.use(express.json());

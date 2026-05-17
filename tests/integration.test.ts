@@ -18,6 +18,7 @@ let pool: any;
 let redisConnection: any;
 let app: any;
 let imageProcessingQueue: any;
+let imageWorker: any;
 
 beforeAll(async () => {
   if (!isCi) {
@@ -52,9 +53,11 @@ beforeAll(async () => {
   imageProcessingQueue = queueModule.imageProcessingQueue;
 
   app = require('../src/index').default;
+  imageWorker = require('../src/workers/index').imageWorker;
 }, 90_000);
 
 afterAll(async () => {
+  if (imageWorker)          await imageWorker.close().catch(() => {});
   if (imageProcessingQueue) await imageProcessingQueue.close().catch(() => {});
   if (pool)                 await pool.end().catch(() => {});
   if (redisConnection)      await redisConnection.quit().catch(() => {});
