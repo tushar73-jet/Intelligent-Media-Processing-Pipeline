@@ -5,12 +5,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   filename       TEXT        NOT NULL,
   filepath       TEXT        NOT NULL,
   hash           TEXT,
+  dhash          TEXT,
   failure_reason TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_hash ON jobs(hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_dhash ON jobs(dhash);
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 
